@@ -1,0 +1,138 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: projects
+    // Fields: name (string), status (string: Active|Completed), deadline (string), clientId (string), uid (string)
+    //
+    // Collection: clients
+    // Fields: name (string), email (string), uid (string)
+    //
+    // Collection: tasks
+    // Fields: title (string), status (string: To Do|Done), dueDate (string), projectId (string), uid (string)
+    //
+    // Collection: invoices
+    // Fields: title (string), amount (number), status (string: Paid|Unpaid), date (string), uid (string)
+    //
+    // Collection: users
+    // Fields: name (string), email (string), role (string)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isDocOwner() {
+      return isOwner(resource.data.uid);
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "jvigneshvignesh33@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(data, allowedFields) {
+      return data.keys().hasOnly(allowedFields);
+    }
+
+    // Domain Validators
+    function isValidProject(data) {
+      let fields = ['name', 'status', 'deadline', 'clientId', 'uid'];
+      return data.keys().hasAll(['name', 'status', 'clientId', 'uid']) &&
+             hasOnlyAllowedFields(data, fields) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.status in ['Active', 'Completed'] &&
+             data.clientId is string &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidClient(data) {
+      let fields = ['name', 'email', 'uid'];
+      return data.keys().hasAll(['name', 'email', 'uid']) &&
+             hasOnlyAllowedFields(data, fields) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidTask(data) {
+      let fields = ['title', 'status', 'dueDate', 'projectId', 'uid'];
+      return data.keys().hasAll(['title', 'status', 'uid']) &&
+             hasOnlyAllowedFields(data, fields) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.status in ['To Do', 'Done'] &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidInvoice(data) {
+      let fields = ['title', 'amount', 'status', 'date', 'uid'];
+      return data.keys().hasAll(['title', 'amount', 'status', 'uid']) &&
+             hasOnlyAllowedFields(data, fields) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.amount is number && data.amount >= 0 &&
+             data.status in ['Paid', 'Unpaid'] &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidUser(data) {
+      let fields = ['name', 'email', 'role'];
+      return data.keys().hasAll(['name', 'email']) &&
+             hasOnlyAllowedFields(data, fields) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /projects/{projectId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidProject(request.resource.data);
+      allow update: if isDocOwner() && isValidProject(request.resource.data) && uidUnchanged();
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /clients/{clientId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidClient(request.resource.data);
+      allow update: if isDocOwner() && isValidClient(request.resource.data) && uidUnchanged();
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidTask(request.resource.data);
+      allow update: if isDocOwner() && isValidTask(request.resource.data) && uidUnchanged();
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidInvoice(request.resource.data);
+      allow update: if isDocOwner() && isValidInvoice(request.resource.data) && uidUnchanged();
+      allow delete: if isDocOwner() || isAdmin();
+    }
+  }
+}
